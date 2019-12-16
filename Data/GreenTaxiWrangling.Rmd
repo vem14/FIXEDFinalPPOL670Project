@@ -1,0 +1,175 @@
+---
+title: "Green Taxi Data Wrangling"
+author: "Vincent Morin"
+date: "12/3/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = F,error=F,comment = F)
+require(tidyverse)
+require(tidytext)
+require(lubridate)
+require(ggthemes)
+require(textdata)
+require(topicmodels)
+require(recipes)
+require(caret)
+```
+
+
+This file will handle the initial cleaning of the 2016 Green Taxi dataset.  This data is far too large to cooperate with the average system, and therefore will require considerable scaling, while minding the purpose of the project.
+
+
+```{r}
+# Import our dataset.
+# Note: You will need to download the data from:
+# ((insert dropbox link))
+# and drop the file into the proper folder:
+# FinalProjectPPOL670/InitialData/
+GreenTdata = read_csv("2016_Green_Taxi_Trip_Data.csv") 
+
+
+
+
+# Use Glimpse to check dataset values. 
+GreenTdata %>% glimpse()
+```
+
+
+Due to the size of the dataset, we'll consider extranneous high-level material to remove.  Removal criteria include: uncertainty/unknown descriptor, constant value, and location.  Sensitive to the constraint of the project, we'll make location of each ride a constant value; we'll assume all trips are out of New York, and that the New York Central Park weather data corresponds with the location. 
+
+**Trimming** 
+
+We'll begin by removing several columns which have constant values, unknown descriptors, or are otherwise irrelevant to the analysis.  Some columns which were removed include pickup and dropoff locations
+
+These include:
+- VendorID
+- Store_and_fwd_flag
+- RateCodeID
+- Pickup_longitude
+- Pickup_latitude
+- Dropoff_longitutde
+- Dropoff_latitude
+- Ehail_fee
+- Trip_type
+- Payment_type
+- PULocationID
+- DOLocationID
+
+
+```{r}
+# Remove several variables not relevant to goal. 
+GreenTdata2 <- select(GreenTdata, 
+                      -VendorID, 
+                      -Store_and_fwd_flag, 
+                      -RateCodeID, 
+                      -Pickup_longitude, 
+                      -Pickup_latitude, 
+                      -Dropoff_longitude, 
+                      -Dropoff_latitude, 
+                      -Ehail_fee, 
+                      -Trip_type, 
+                      -Payment_type, 
+                      -PULocationID, 
+                      -DOLocationID)
+
+
+
+
+# Use Glimpse to check dataset values.
+GreenTdata2 %>% glimpse()
+```
+
+
+Because we want our focus to be an analysis on riders who tippied, and due to the constraint of size and time, we will filter out all rows without tips. 
+
+```{r}
+# filter out rows where observation in variable Tip_amount
+# is equal to 0
+GreenTips <- GreenTdata2[GreenTdata2$Tip_amount != 0, ]
+
+
+
+
+# Use Glimpse to check dataset values.
+GreenTips %>% glimpse()
+```
+
+Before we begin to break down the dataset further, we'll want to capture the duration of each trip as a new variable. 
+
+```{r}
+# Create new dataset to code off of
+GreenTips1 <- GreenTips
+
+
+
+
+# Change lpep... from character type to datetime
+GreenTips1$lpep_pickup_datetime <- mdy_hms(
+  GreenTips$lpep_pickup_datetime)
+
+
+
+
+# Change Lpep... from character type to datetime
+GreenTips1$Lpep_dropoff_datetime <- mdy_hms(
+  GreenTips$Lpep_dropoff_datetime)
+
+
+
+
+# Use Glimpse to check dataset values.
+GreenTips1 %>% glimpse()
+```
+
+```{r}
+# Create new dataset to code off of
+GreenTips2 <- GreenTips1
+
+
+
+
+# Find difference between two variables in hours
+GreenTips2 <- GreenTips1 %>% mutate(
+ Trip_Duration = 
+  difftime(Lpep_dropoff_datetime, lpep_pickup_datetime, unit="hours"))
+
+
+
+
+# Convert Trip_Duration to numeric type. 
+GreenTips2$Trip_Duration <- as.numeric(GreenTips2$Trip_Duration)
+
+
+
+
+# Use Glimpse to check dataset values.
+GreenTips2 %>% glimpse()
+```
+
+Next step will be to average observations across days -- each row corresponds with an individual taxi trip w/a tip.  There are several hundred per day.  In order to conduct analysis on this dataset, we'll aggregate the data, such that each new observation per day represents the averages of the variables associated. 
+
+This starts by manipulating our variable types. 
+
+We'll drop the lpep.. and Lpep... columns, and replace them with date variable.  
+
+```{r}
+# Mutate lpep... column from character type to date type
+# Create new variable. 
+GreenData <- GreenTips2 %>% mutate(
+  date = as.Date(GreenTips2$lpep_pickup_datetime))
+
+
+
+
+# Use Glimpse to check dataset values.
+GreenData %>% glimpse()
+```
+We'll save amended data to a new .csv file for storage, and reproducibility. 
+
+```{r}
+# Save new datafile
+GreenData %>% write_csv(path = "2016_Green_Taxi_TipsOnly.csv")
+
+```

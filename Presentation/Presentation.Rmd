@@ -1,0 +1,376 @@
+---
+title: "Predicting Tips: New York City Taxis"
+author: "Vincent Morin - vem14"
+date: "12/4/2019"
+output:
+  beamer_presentation: 
+    theme: "Pittsburgh"
+    fonttheme: "structurebold"
+    
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = F,error=F,comment = F)
+require(tidyverse)
+require(tidytext)
+require(lubridate)
+require(ggthemes)
+require(textdata)
+require(topicmodels)
+require(recipes)
+require(caret)
+```
+
+
+```{r, comment = "", include=FALSE}
+# Import Dataset
+PresData = read_csv("Data/2016_Green_Taxi_Averages.csv") 
+
+PresWeather = read_csv("Data/weather_data_nyc_centralpark_2016.csv")
+
+```
+
+## Statement of Purpose
+
+**Goal:** 
+
+Conduct analysis into the relationships between average tip-size per day and other external variables such as weather, time/day, number of passengers, etc..
+
+**What is our best predictor variable?**
+
+
+## Our Data
+
+**"2016 Green Taxi Trip Data"**
+
+- Includes records from all trips completed by New York's Green Taxis (Boro Taxis) in 2016. 
+- The Green Taxi was created in 2011 after analysis into the transit system which showed a lack of available cabs in Upper Manhattan and the outer-boroughs. 
+
+## Our Data
+
+- Available via **NYC OpenData**
+- Provided by the Taxi and Limousine Commission
+- **16.4 million rows**
+- **23 columns** (how many are relevant?)
+
+**Wrangling**
+
+Due to size of the data, need to scale down:
+
+- **Criteria for removing columns:** uncertainty/unknown descriptor, constant value, and location (Note: holding location constant - NYC). - Only focus on columns which include tips.
+- **Scaling:** Aggregate data around shared date and remove non-tip entries. 
+
+## Our Data
+
+```{r, include=TRUE, comment="", echo=TRUE}
+PresData %>% glimpse()
+```
+
+## More Wrangling
+
+**One issue:** lack of variables/observations.
+
+- We'll pull in 2016 New York Weather Data, and combine with inner_join. 
+  - Create more variables
+
+```{r, include=TRUE, comment="", echo=TRUE}
+PresWeather %>% glimpse()
+```
+
+## Data Analysis
+
+**Total Tips by Day of Week**
+```{r, include=FALSE}
+train_data = read_csv("Data/Train_Data.csv") 
+
+train_data1 <- train_data %>%
+  mutate(Day_of_Week = 
+           wday(train_data$date, label=TRUE),
+         Week = 
+           week(train_data$date), 
+         Month = 
+           month(train_data$date, label=TRUE), 
+         Weekday = ifelse(
+           Day_of_Week > 1 & 
+             Day_of_Week < 7, 
+           "TRUE", "FALSE")
+         )
+         
+```
+
+```{r, include=TRUE, echo=FALSE}
+# Tips Per Day
+Tips_Per_Day_plot <- train_data1 %>%
+  ggplot(aes(x = Day_of_Week, y = Avg_Tip, fill = Day_of_Week)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Day of the Week", y = "Tips (Dollars)")
+
+
+Tips_Per_Day_plot
+```
+
+## Data Analysis
+
+**Total Average Tips per Ride by Month**
+```{r, include=TRUE, echo=FALSE}
+# Tips Per Month
+Tips_Per_Month_plot <- train_data1 %>%
+  ggplot(aes(x = Month, y = Avg_Tip, fill = Month)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Month", y = "Tips (Dollars)")
+
+
+Tips_Per_Month_plot
+```
+
+## Data Analysis
+
+**Tip Variation for Rain**
+```{r, include=TRUE, echo=FALSE}
+# Tips with weather
+Weather_Tips_plot <- train_data1 %>%
+  ggplot(aes(x = Has_Rain, y = Avg_Tip, color = Has_Rain)) +
+  geom_jitter(size = 4, stat = "identity") +
+  labs(y = "Average Tips") + 
+  geom_hline(yintercept = mean(train_data1$Avg_Tip), color = "black", linetype = "dashed", size = 1)
+
+
+Weather_Tips_plot
+```
+
+## Data Analysis 
+
+**Tips and Distance of Ride**
+
+```{r, include=TRUE, echo=FALSE}
+# Tips with weather
+Snow_Tips_plot <- train_data1 %>%
+  ggplot(aes(x = Avg_Distance, y = Avg_Tip, color = Avg_Tip)) +
+  geom_jitter(size = 4, stat = "identity") +
+  labs(x = "Average Distance (Miles)", y = "Average Tips (Dollars)") + 
+  geom_hline(yintercept = mean(train_data1$Avg_Tip), color = "black", linetype = "dashed", size = 1)
+
+
+Snow_Tips_plot
+```
+
+## Methods/Tools
+
+**Supervised Machine Learning**
+
+**Goal:** build models which best predict the average tip size per ride. 
+
+- Regression methods:
+  - Linear Regression - predict Y, based on predictor X.
+  - K-Nearest Neighbors - predict Y, based on similar observations in proximity.
+  - Classification and Regression Trees (CART)
+  - Random Forest - Decision trees acting as an ensemble. 
+  
+
+## Results
+
+```{r, include=FALSE}
+# Import training and test datasets. 
+train_data2 <- read_csv("Data/Train_Data.csv")
+test_data2 <- read_csv("Data/Test_Data.csv")
+
+```
+
+**Machine Learning!**
+
+```{r, include=FALSE}
+# Select the variables that we will use as predictors
+train_data3 <- train_data2 %>% 
+  select(-date)
+
+
+
+
+# Apply to test data as well
+test_data3 <- test_data2 %>%
+  select(-date)
+```
+
+```{r, include=FALSE}
+train_data3 <- train_data3 %>%
+  mutate(Weekday = as.character(Weekday), 
+         Has_Rain = as.character(Has_Rain), 
+         Has_Snow = as.character(Has_Snow))
+
+
+
+train_data3 %>% glimpse()
+```
+
+
+```{r, include=FALSE}
+# Use recipe function
+Green_recipe <- recipe(Avg_Tip ~ ., data = train_data3)
+
+Green_recipe <- Green_recipe %>%
+  step_knnimpute(all_predictors(), all_outcomes()) %>% 
+  step_center(all_numeric()) %>%
+  step_scale(all_numeric()) %>%
+  step_dummy(all_nominal())
+
+
+
+
+# Prepare recipe
+Green_prep_recipe <- Green_recipe %>% prep()
+```
+
+```{r, include=FALSE}
+# Bake data
+processed_Green_data <- bake(Green_prep_recipe, new_data = train_data3)
+
+
+
+
+Processed_Green_data_test <- bake(Green_prep_recipe, new_data = test_data3)
+
+
+
+
+
+processed_Green_data %>% glimpse()
+```
+
+```{r, include=FALSE}
+processed_Green_data %>% 
+  select_if(is.numeric) %>% 
+  gather(var,val) %>% 
+  ggplot(aes(val,group=var)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~var,scales="free",ncol=2)
+```
+
+```{r, include=FALSE}
+# Rename dataset for ease of access. 
+training_data <- processed_Green_data
+
+
+
+
+testing_data <- Processed_Green_data_test
+```
+
+
+```{r, include=FALSE}
+# Set seed for replication
+set.seed(1111)
+
+
+
+
+# Break data into 5 equal folds
+folds <- createFolds(training_data$Avg_Tip, k = 5)
+
+
+
+
+sapply(folds, length)
+```
+
+```{r, include=FALSE}
+# Setup validation conditions from caret package
+control_conditions <-
+  trainControl(method = "cv", 
+               index = folds)
+```
+
+```{r, include=FALSE}
+mod_knn <-
+  train(Avg_Tip ~., 
+        data = training_data, 
+        method = "knn",
+        metric = "RMSE",
+        trControl = control_conditions)
+
+```
+
+```{r, include=FALSE}
+mod_rf <-
+  train(Avg_Tip ~ ., 
+        data = training_data, 
+        method = "ranger",
+        metric = "RMSE", 
+        trControl = control_conditions)
+
+```
+
+```{r, include = FALSE}
+colnames(training_data) <- make.names(colnames(training_data))
+
+mod_cart <-
+  train(Avg_Tip ~., 
+        data = training_data,
+        method = "rpart",
+        metric = "RMSE",
+        trControl = control_conditions)
+
+```
+
+```{r, include=FALSE}
+tune_cart <- expand.grid(cp = c(0.0010281))
+
+
+mod_cart2 <-
+  train(Avg_Tip ~., 
+        data = training_data, 
+        method = "rpart", 
+        metric = "RMSE", 
+        tuneGrid = tune_cart, 
+        trControl = control_conditions)
+
+```
+
+```{r, include=TRUE, echo=FALSE}
+plot(mod_rf)
+
+```
+
+```{r, include=TRUE, echo=FALSE}
+
+mod_rf$bestTune
+```
+
+## Results
+```{r, include=FALSE}
+mod_list <-
+  list(
+    knn = mod_knn,
+    cart = mod_cart,
+    deep_cart = mod_cart2,
+    rf = mod_rf
+  )
+
+
+resamples(mod_list)
+```
+
+```{r, echo=FALSE}
+dotplot(resamples(mod_list), metric = "Rsquared")
+```
+
+## Conclusions
+
+**Preliminary Results** 
+
+- Results from models are not very conclusive, 
+- Relationships with predictor models are not very strong. 
+- Need more data/observations. 
+
+**Lessons**
+
+- Aggregating data loses a lot of information: variability, etc. - keeping each ride versus averaging across each day. 
+- Large datasets will ruin your day... 
+  - Important to save large data often. 
+  - Manage environment and memory. 
+- Save models as images. 
+- Push to Git often. 
+
+##
+
+**Thanks!**

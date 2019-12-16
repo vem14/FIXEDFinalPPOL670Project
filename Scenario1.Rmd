@@ -1,0 +1,781 @@
+---
+title: "Data Wrangling"
+author: "Vincent Morin"
+date: "12/3/2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = F,error=F,comment = F)
+require(tidyverse)
+require(tidytext)
+require(lubridate)
+require(ggthemes)
+require(textdata)
+require(topicmodels)
+require(recipes)
+require(caret)
+```
+
+Be sure to run GreenTaxiWrangling.rmd first, located in the Data folder. 
+
+```{r}
+# Import Dataset
+GreenDaysData <- read_csv("Data/2016_Green_Taxi_TipsOnly.csv") 
+
+```
+
+
+```{r}
+# Mutating the data to calculate the mean
+# for each of our variables, grouped by date. 
+GreenDaysData <- GreenDaysData %>% mutate(
+  date = date(date)) %>%
+  group_by(date) %>%
+  summarize(Avg_Passengers = mean(Passenger_count),
+            Avg_Distance = mean(Trip_distance),
+            Avg_Fare = mean(Fare_amount),
+            Avg_Extra = mean(Extra),
+            Avg_MTA_tax = mean(MTA_tax),
+            Avg_Tip = mean(Tip_amount),
+            Total_Tip = sum(Tip_amount),
+            Avg_Tolls = mean(Tolls_amount),
+            Avg_Surcharge = mean(improvement_surcharge),
+            Avg_Total = mean(Total_amount),
+            Avg_Duration = mean(Trip_Duration),
+            Total_Trips = (Total_Tip/Avg_Tip)) %>%
+  select(-Total_Tip)
+
+
+
+GreenDaysData %>% glimpse()
+```
+
+
+Next, we'll want to import our additional dataset: New York 2016 Central Park Weather. 
+
+```{r}
+# Import Dataset
+WeatherData = read_csv("Data/weather_data_nyc_centralpark_2016.csv") 
+
+```
+
+
+First, we'll take a look at the new data, and look for any inconsistencies or missing values.
+
+```{r}
+# Use Glimpse to check dataset values. 
+WeatherData %>% 
+  summarize_all(class) %>% 
+  glimpse()
+```
+
+```{r}
+# Check for missing values among the numeric variables.
+sum(is.na(WeatherData))
+```
+
+Luckily there are no missing values, however, there are some odd results in the data.  For example, on days with trace amounts of precipitation, the observation will contain a value of "T".  To be mindful of this, we'll convert all "T"s to values of 0.01.  Additionally, we'll take this opportunity to convert some column types to better fit our other dataset. 
+
+
+```{r}
+WeatherData1 <- WeatherData %>%
+  mutate(date = dmy(date),
+         Rain = as.numeric(
+           ifelse(
+             precipitation == "T", "0.01", precipitation)),
+         Snow_fall = as.numeric(
+           ifelse(
+             `snow fall` == "T", "0.01", `snow fall`)),
+         Snow_depth = as.numeric(
+           ifelse(
+             `snow depth` == "T", "0.01", `snow depth`)),
+         precipitation = Snow_fall + Rain
+  ) %>%
+  select(-`snow fall`, -`snow depth`)
+
+
+
+WeatherData1 %>% glimpse()
+```
+
+
+At this point, we can merge our datasets using inner_join, with the mutual column of "date". 
+
+```{r}
+# Use inner_join to combine both datasets around
+# variable, "date". 
+# Assign to new dataset, "Data". 
+Data <- inner_join(GreenDaysData, WeatherData1, by="date")
+
+
+
+
+# Use Glimpse to check dataset values. 
+Data %>% glimpse()
+```
+
+Et viola -- we've created our dataset.  We'll save this data into a new file. 
+
+```{r}
+# Save new data file
+ Data %>% write_csv(path = "Data/Scenario1_Data.csv")
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+--------------------------------
+
+## Data Analysis 
+
+
+
+```{r}
+# Import Dataset
+Data = read_csv("Data/Scenario1_Data.csv") 
+
+```
+
+This file will handle the data analysis portion of the Final Project. 
+
+We'll begin by splitting the data into test and training datasets with equal proportions of 75% and 25%, respectively. 
+
+Additionally, we'll ensure the training data proportion is correct by doing a quick calculation. 
+
+```{r}
+# Set seed for reproducibility. 
+set.seed(334) 
+
+
+
+
+# Indexing - used parse data into proportions. 
+index = createDataPartition(Data$Avg_Tip, p=.75,list=F) 
+
+
+
+
+# Use 75% of the data as training data 
+train_data = Data[index,]
+
+
+
+
+# Use 25% of the data as testing data. 
+test_data = Data[-index,]
+
+
+
+
+# Calculate proportion of training data
+# relative to total data. 
+# Should be ~ 0.75. 
+round(nrow(train_data)/nrow(Data),3)
+
+```
+
+We'll begin by exploring our data. 
+
+```{r}
+# Use Glimpse to check dataset values. 
+train_data %>% 
+  summarize_all(class) %>% 
+  glimpse()
+```
+
+At this point, our data is mostly numeric.  We should also check information on our date range. 
+
+```{r}
+# Print a brief summary of # of observations, 
+# min date, and max date. 
+
+train_data %>% summarize( 
+  min_date = min(date), 
+  max_date = max(date))
+
+```
+
+We'll also check to see if there are any missing values (NAs) in the dataset. 
+
+```{r}
+# Check for missing values among the numeric variables.
+sum(is.na(train_data))
+```
+
+There are no missing values in the dataset. 
+
+Next, we'll print an illustration (histograms) to see the distribution of our variables. 
+
+```{r}
+# Print histograms of distributions of variables. 
+train_data_plot = train_data %>% 
+  select_if(is.numeric) %>% 
+  gather(var,val) %>% 
+  ggplot(aes(val,group=var)) + 
+  geom_histogram(bins = 30) +
+  facet_wrap(~var,scales="free",ncol=2)
+
+
+
+
+# Save illustration to a png file, "Scenario1_train_plot.png"
+ggsave(
+  train_data_plot, 
+  filename = "Images/Scenario1_train_plot.png", 
+  device = "png",
+  width = 25, 
+  height = 50, 
+  limitsize = FALSE, 
+  dpi = 300 )
+
+
+
+
+# Print results
+print(train_data_plot)
+```
+
+Most of the data is distributed relatively normally. 
+
+A unique example of an exception to this is: Avg_Extra. 
+
+```{r}
+# Print histogram of Avg_Extra. 
+#Avg_Extra_plot = train_data %>% 
+  #select(Avg_Extra) %>% 
+  #gather(var,val) %>% 
+  #ggplot(aes(val,group=var)) + 
+  #geom_histogram(bins = 30) +
+  #facet_wrap(~var,scales="free",ncol=2)
+
+
+
+
+# Save illustration to a png file, "Avg_Extra_plot"
+#ggsave(
+  #Avg_Extra_plot, 
+  #filename = "Images/Scenario1_Avg_Extra_plot.png", 
+  #device = "png",
+  #width = 25, 
+  #height = 50, 
+  #limitsize = FALSE, 
+  #dpi = 300 )
+
+
+
+
+# Print results
+#print(Avg_Extra_plot)
+```
+
+Next, we'll consider additional predictor variables to derive from the data. 
+
+To start, we'll utilize what information we have on the date, to create a few new variables:
+
+- Day of the week,
+- Day of the month,
+- Week of year,
+- Weekday - True or False, 
+- Month.
+
+This will be done using the lubridate package. 
+
+```{r}
+train_data1 <- train_data %>%
+  mutate(Day_of_Week = 
+           wday(train_data$date),
+         Day_of_Month = 
+           month(train_data$date),
+         Week = 
+           week(train_data$date), 
+         Month = 
+           month(train_data$date), 
+         Weekday = ifelse(
+           Day_of_Week > 1 & 
+             Day_of_Week < 7, 
+           "TRUE", "FALSE")
+         )
+         
+
+
+
+# Use Glimpse to check dataset values. 
+train_data1 %>% head()
+```
+
+Reproduce into testing_data
+```{r}
+test_data1 <- test_data %>%
+  mutate(Day_of_Week = 
+           wday(test_data$date),
+         Day_of_Month = 
+           month(test_data$date),
+         Week = 
+           week(test_data$date), 
+         Month = 
+           month(test_data$date), 
+         Weekday = ifelse(
+           Day_of_Week > 1 & 
+             Day_of_Week < 7, 
+           "TRUE", "FALSE")
+         )
+```
+
+
+
+**Total Tips by Day of Week**
+```{r, include=FALSE}
+
+train_data3 <- train_data %>%
+  mutate(Day_of_Week = 
+           wday(train_data$date, label=TRUE),
+         Week = 
+           week(train_data$date), 
+         Month = 
+           month(train_data$date, label=TRUE), 
+         Weekday = ifelse(
+           Day_of_Week > 1 & 
+             Day_of_Week < 7, 
+           "TRUE", "FALSE")
+         )
+         
+```
+
+```{r, include=TRUE, echo=FALSE}
+# Tips Per Day
+Tips_Per_Day_plot <- train_data3 %>%
+  ggplot(aes(x = Day_of_Week, y = Avg_Tip/Total_Trips, fill = Day_of_Week)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Day of the Week", y = "Average Daily Tips (Dollars)")
+
+
+Tips_Per_Day_plot
+```
+
+```{r}
+# Save illustration to a png file, "Scenario1_Days_of_Week_plot.png"
+ggsave(
+  Tips_Per_Day_plot, 
+  filename = "Images/Scenario1_Days_of_Week_plot.png", 
+  device = "png",
+  width = 5, 
+  height = 3, 
+  limitsize = TRUE, 
+  dpi = 300 )
+```
+
+```{r, include=TRUE, echo=FALSE}
+# Tips Per Month
+Tips_Per_Month_plot <- train_data3 %>%
+  ggplot(aes(x = Month, y = Avg_Tip, fill = Month)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Day of the Week", y = "Average Daily Tips (Dollars)")
+
+
+Tips_Per_Month_plot
+```
+
+```{r}
+# Save illustration to a png file, "Scenario1_Months_plot.png"
+ggsave(
+  Tips_Per_Month_plot, 
+  filename = "Images/Scenario1_Months_plot.png", 
+  device = "png",
+  width = 5, 
+  height = 3, 
+  limitsize = TRUE, 
+  dpi = 300 )
+```
+
+```{r, include=TRUE, echo=FALSE}
+# Tips and distance
+Distance_Tips_plot <- train_data1 %>%
+  ggplot(aes(x = Avg_Distance, y = Avg_Tip, color = Avg_Tip)) +
+  geom_jitter(size = 1.5, stat = "identity") +
+  labs(x = "Average Distance (Miles)", y = "Average Tips (Dollars)") + 
+  geom_hline(yintercept = mean(train_data1$Avg_Tip), color = "black", linetype = "dashed", size = 1)
+
+
+ggsave(
+  Distance_Tips_plot, 
+  filename = "Images/Scenario1_Distance_plot.png", 
+  device = "png",
+  width = 5, 
+  height = 3, 
+  limitsize = TRUE, 
+  dpi = 300 )
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-----------------------------
+
+## Machine Learning
+
+
+
+
+```{r}
+#(Please ignore)
+# Import training and test datasets. 
+# train_data2 <- read_csv("Data/Train_Data.csv")
+
+# test_data2 <- read_csv("Data/Test_Data.csv")
+
+```
+
+Machine Learning!
+
+```{r}
+# Select the variables that we will use as predictors
+train_data3 <- train_data1 %>% 
+  select(-date)
+
+
+
+
+# Apply to test data as well
+test_data3 <- test_data1 %>%
+  select(-date)
+```
+
+We'll process the data using the recipes package. 
+```{r}
+train_data3 <- train_data3 %>%
+  mutate(Weekday = as.character(Weekday))
+
+
+
+train_data3 %>% glimpse()
+```
+
+
+```{r}
+# Use recipe function
+Green_recipe <- recipe(Avg_Tip ~ ., data = train_data3)
+
+Green_recipe <- Green_recipe %>%
+  step_knnimpute(all_predictors(), all_outcomes()) %>% 
+  step_center(all_numeric()) %>%
+  step_scale(all_numeric()) %>%
+  step_dummy(all_nominal())
+
+
+
+
+# Prepare recipe
+Green_prep_recipe <- Green_recipe %>% prep()
+```
+
+```{r}
+# Bake data
+processed_Green_data <- bake(Green_prep_recipe, new_data = train_data3)
+
+
+
+
+Processed_Green_data_test <- bake(Green_prep_recipe, new_data = test_data3)
+
+
+
+
+
+processed_Green_data %>% glimpse()
+```
+
+Rename dataset for simplicity. 
+
+```{r}
+processed_Green_data %>% 
+  select_if(is.numeric) %>% 
+  gather(var,val) %>% 
+  ggplot(aes(val,group=var)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~var,scales="free",ncol=2)
+```
+
+```{r}
+# Rename dataset for ease of access. 
+training_data <- processed_Green_data
+
+
+
+
+testing_data <- Processed_Green_data_test
+```
+
+
+
+```{r}
+# Set seed for replication
+set.seed(1111)
+
+
+
+
+# Break data into 5 equal folds
+folds <- createFolds(training_data$Avg_Tip, k = 5)
+
+
+
+
+sapply(folds, length)
+```
+
+```{r}
+# Setup validation conditions from caret package
+control_conditions <-
+  trainControl(method = "cv", 
+               index = folds)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+----------------------------
+Linear Regression
+
+```{r}
+mod_lm <-
+  train(Avg_Tip ~ ., 
+        data = training_data,
+        method = "lm",
+        metric = "RMSE",
+        trControl = control_conditions)
+
+
+
+
+mod_lm
+```
+
+K-Nearest Neighbors
+
+```{r}
+mod_knn <-
+  train(Avg_Tip ~., 
+        data = training_data, 
+        method = "knn",
+        metric = "Rsquared",
+        trControl = control_conditions)
+
+
+
+
+mod_knn
+
+plot(mod_knn)
+```
+
+```{r}
+mod_knn$finalModel
+```
+
+```{r}
+knn_tune = expand.grid(k = c(1,3,10,50))
+
+mod_knn <-
+  train(Avg_Tip ~., 
+        data = training_data, 
+        method = "knn",
+        metric = "Rsquared",
+        trControl = control_conditions, 
+        tuneGrid = knn_tune)
+
+
+
+plot(mod_knn)
+```
+
+CART
+
+```{r}
+colnames(training_data) <- make.names(colnames(training_data))
+
+mod_cart <-
+  train(Avg_Tip ~., 
+        data = training_data,
+        method = "rpart",
+        metric = "Rsquared",
+        trControl = control_conditions)
+
+
+
+
+mod_cart
+
+
+plot(mod_cart)
+```
+
+```{r}
+print(mod_cart$finalModel)
+```
+```{r}
+tune_cart <- expand.grid(cp = c(0.0010281))
+
+
+mod_cart2 <-
+  train(Avg_Tip ~., 
+        data = training_data, 
+        method = "rpart", 
+        metric = "Rsquared", 
+        tuneGrid = tune_cart, 
+        trControl = control_conditions)
+
+
+print(mod_cart2)
+```
+
+
+
+
+
+Random Forest
+
+
+```{r}
+mod_rf <-
+  train(Avg_Tip ~ ., 
+        data = training_data, 
+        method = "ranger",
+        metric = "Rsquared", 
+        trControl = control_conditions)
+
+
+
+mod_rf
+```
+
+```{r}
+plot(mod_rf)
+
+
+
+mod_rf$bestTune
+```
+
+```{r}
+mod_list <-
+  list(
+    lm = mod_lm,
+    knn = mod_knn,
+    cart = mod_cart, 
+    cart_deep = mod_cart2,
+    rf = mod_rf
+  )
+
+
+resamples(mod_list)
+
+
+
+dotplot(resamples(mod_list), metric = "RMSE")
+
+png(file="Images/Scenario1_Mod_list.png")
+dotplot(resamples(mod_list), metric = "Rsquared")
+dev.off()
+```
+
+
+
+```{r}
+pred_wrapper <- function(object, newdata) {
+  predict(object, data = newdata, type = "terminalNodes")$predictions[,]}
+
+
+
+permute_imp_plot <-
+  vip::vip(mod_rf$finalModel, 
+           data = training_data,
+           target = training_data$Avg_Tip,
+           train = training_data %>%
+             select(-Avg_Tip),
+           reference_class = "yes",
+           method = "permute",
+           pred_wrapper = pred_wrapper)
+
+
+permute_imp_plot
+```
+
+
+
+
+
+Test predictor from random forest. 
+```{r}
+pred <- predict(mod_rf,newdata = testing_data)
+mse = sum(testing_data$Avg_Tip-pred^2)/nrow(testing_data)
+mse 
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
